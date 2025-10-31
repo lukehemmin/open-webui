@@ -26,12 +26,19 @@ ARG BUILD_HASH
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
-
+# Copy pre-built files if they exist, otherwise build from source
 COPY . .
+
+# Check if build directory exists, if not build from source
+RUN if [ ! -d "build" ]; then \
+    echo "Build directory not found, building from source..."; \
+    npm ci && \
+    NODE_OPTIONS="--max-old-space-size=8192" npm run build; \
+else \
+    echo "Using pre-built frontend files"; \
+fi
+
 ENV APP_BUILD_HASH=${BUILD_HASH}
-RUN npm run build
 
 ######## WebUI backend ########
 FROM python:3.11-slim-bookworm AS base
