@@ -810,13 +810,40 @@ async def generate_chat_completion(
     if "max_tokens" in payload and "max_completion_tokens" in payload:
         del payload["max_tokens"]
 
-    # Extract reasoning_summary: used to switch to Responses API, not sent to Chat Completions
+    # Extract reasoning_summary: controls reasoning visibility per provider
     reasoning_summary = payload.pop("reasoning_summary", None)
 
-    # Use Responses API when reasoning_summary is set and model supports it
-    use_responses_api = reasoning_summary is not None and is_openai_reasoning_model(
-        payload.get("model", "")
+    # Detect provider from URL
+    is_openai_official = "api.openai.com" in url
+    is_openrouter = "openrouter.ai" in url
+    is_anthropic = "api.anthropic.com" in url
+
+    # Use Responses API only for official OpenAI with a reasoning model
+    use_responses_api = (
+        is_openai_official
+        and reasoning_summary is not None
+        and is_openai_reasoning_model(payload.get("model", ""))
     )
+
+    # OpenRouter: convert reasoning_summary → reasoning.effort parameter
+    # OpenRouter already returns delta.reasoning in streaming (middleware handles it)
+    if is_openrouter and reasoning_summary is not None:
+        reasoning_effort = payload.pop("reasoning_effort", None)
+        if not reasoning_effort:
+            # Map reasoning_summary to effort level
+            effort_map = {"auto": "auto", "concise": "low", "detailed": "high"}
+            reasoning_effort = effort_map.get(reasoning_summary, "auto")
+        payload["reasoning"] = {"effort": reasoning_effort}
+
+    # Anthropic: convert reasoning_summary → thinking parameter
+    # Anthropic returns delta.thinking in streaming (middleware now handles it)
+    if is_anthropic and reasoning_summary is not None:
+        reasoning_effort = payload.pop("reasoning_effort", None)
+        budget_map = {"low": 4096, "medium": 10000, "high": 32000}
+        budget_tokens = budget_map.get(reasoning_effort or "medium", 10000)
+        payload["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
+        # Anthropic requires temperature=1 when thinking is enabled
+        payload.pop("temperature", None)
 
     # Convert the modified body back to JSON
     if "logit_bias" in payload:
