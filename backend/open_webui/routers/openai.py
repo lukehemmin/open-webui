@@ -94,16 +94,16 @@ async def cleanup_response(
 
 def openai_o1_o3_handler(payload):
     """
-    Handle o1, o3 specific parameters
+    Handle o1, o3, o4 specific parameters
     """
     if "max_tokens" in payload:
         # Remove "max_tokens" from the payload
         payload["max_completion_tokens"] = payload["max_tokens"]
         del payload["max_tokens"]
 
-    # Fix: o1 and o3 do not support the "system" role directly.
+    # Fix: o1, o3, o4 do not support the "system" role directly.
     # For older models like "o1-mini" or "o1-preview", use role "user".
-    # For newer o1/o3 models, replace "system" with "developer".
+    # For newer o1/o3/o4 models, replace "system" with "developer".
     if payload["messages"][0]["role"] == "system":
         model_lower = payload["model"].lower()
         if model_lower.startswith("o1-mini") or model_lower.startswith("o1-preview"):
@@ -112,6 +112,136 @@ def openai_o1_o3_handler(payload):
             payload["messages"][0]["role"] = "developer"
 
     return payload
+
+
+def is_openai_reasoning_model(model: str) -> bool:
+    """Check if model is an OpenAI reasoning model that supports Responses API"""
+    return model.lower().startswith(("o1", "o3", "o4"))
+
+
+def convert_to_responses_api_payload(payload: dict, reasoning_summary: str) -> dict:
+    """
+    Convert Chat Completions format payload to OpenAI Responses API format.
+    Responses API: POST /v1/responses
+    """
+    responses_payload: dict = {}
+
+    # Convert messages → instructions (system) + input (user/assistant)
+    messages = payload.get("messages", [])
+    instructions = None
+    input_items = []
+
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role in ("system", "developer"):
+            instructions = content  # Use last system/developer message as instructions
+        else:
+            input_items.append({"type": "message", "role": role, "content": content})
+
+    if instructions:
+        responses_payload["instructions"] = instructions
+    responses_payload["input"] = input_items
+    responses_payload["model"] = payload["model"]
+    responses_payload["stream"] = payload.get("stream", True)
+
+    # Convert max_tokens / max_completion_tokens → max_output_tokens
+    max_tokens = payload.get("max_completion_tokens") or payload.get("max_tokens")
+    if max_tokens:
+        responses_payload["max_output_tokens"] = int(max_tokens)
+
+    # Merge reasoning parameters into a single reasoning object
+    reasoning: dict = {}
+    if payload.get("reasoning_effort"):
+        reasoning["effort"] = payload["reasoning_effort"]
+    reasoning["summary"] = reasoning_summary  # "auto" | "concise" | "detailed"
+    responses_payload["reasoning"] = reasoning
+
+    # Copy compatible parameters
+    for param in ["temperature", "top_p", "seed", "tools", "tool_choice"]:
+        if payload.get(param) is not None:
+            responses_payload[param] = payload[param]
+
+    return responses_payload
+
+
+async def responses_api_stream_adapter(r_content):
+    """
+    Convert OpenAI Responses API SSE events to Chat Completions delta format.
+    This allows the existing middleware.py stream_body_handler to process
+    the response without modification.
+
+    Key mappings:
+      response.output_text.delta            → choices[0].delta.content
+      response.reasoning_summary_text.delta → choices[0].delta.reasoning_content
+      response.reasoning_text.delta         → choices[0].delta.reasoning_content
+      response.completed                    → usage chunk + [DONE]
+    """
+    async for line in r_content:
+        line = line.decode("utf-8") if isinstance(line, bytes) else line
+        if not line.strip():
+            continue
+        if not line.startswith("data:"):
+            continue
+
+        data_str = line[5:].strip()
+        if data_str == "[DONE]":
+            yield b"data: [DONE]\n\n"
+            break
+
+        try:
+            event = json.loads(data_str)
+            event_type = event.get("type", "")
+
+            if event_type == "response.output_text.delta":
+                # Regular text content delta
+                chunk = {
+                    "choices": [
+                        {
+                            "delta": {"content": event.get("delta", "")},
+                            "finish_reason": None,
+                            "index": 0,
+                        }
+                    ],
+                    "object": "chat.completion.chunk",
+                }
+                yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+
+            elif event_type in (
+                "response.reasoning_summary_text.delta",
+                "response.reasoning_text.delta",
+            ):
+                # Reasoning content delta → middleware.py handles reasoning_content
+                chunk = {
+                    "choices": [
+                        {
+                            "delta": {"reasoning_content": event.get("delta", "")},
+                            "finish_reason": None,
+                            "index": 0,
+                        }
+                    ],
+                    "object": "chat.completion.chunk",
+                }
+                yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+
+            elif event_type == "response.completed":
+                # Extract usage info before sending [DONE]
+                response_obj = event.get("response", {})
+                usage = response_obj.get("usage", {})
+                if usage:
+                    usage_chunk = {
+                        "usage": {
+                            "prompt_tokens": usage.get("input_tokens", 0),
+                            "completion_tokens": usage.get("output_tokens", 0),
+                            "total_tokens": usage.get("total_tokens", 0),
+                        }
+                    }
+                    yield f"data: {json.dumps(usage_chunk)}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+                break
+
+        except json.JSONDecodeError:
+            continue
 
 
 ##########################################
@@ -666,8 +796,9 @@ async def generate_chat_completion(
     url = request.app.state.config.OPENAI_API_BASE_URLS[idx]
     key = request.app.state.config.OPENAI_API_KEYS[idx]
 
-    # Fix: o1,o3 does not support the "max_tokens" parameter, Modify "max_tokens" to "max_completion_tokens"
-    is_o1_o3 = payload["model"].lower().startswith(("o1", "o3-"))
+    # Fix: o1, o3, o4 models do not support the "max_tokens" parameter
+    # Bug fix: startswith("o3-") missed "o3" (exact) and "o4-mini"; now uses ("o1", "o3", "o4")
+    is_o1_o3 = payload["model"].lower().startswith(("o1", "o3", "o4"))
     if is_o1_o3:
         payload = openai_o1_o3_handler(payload)
     elif "api.openai.com" not in url:
@@ -679,13 +810,28 @@ async def generate_chat_completion(
     if "max_tokens" in payload and "max_completion_tokens" in payload:
         del payload["max_tokens"]
 
+    # Extract reasoning_summary: used to switch to Responses API, not sent to Chat Completions
+    reasoning_summary = payload.pop("reasoning_summary", None)
+
+    # Use Responses API when reasoning_summary is set and model supports it
+    use_responses_api = reasoning_summary is not None and is_openai_reasoning_model(
+        payload.get("model", "")
+    )
+
     # Convert the modified body back to JSON
     if "logit_bias" in payload:
         payload["logit_bias"] = json.loads(
             convert_logit_bias_input_to_json(payload["logit_bias"])
         )
 
-    payload = json.dumps(payload)
+    if use_responses_api:
+        request_payload = json.dumps(
+            convert_to_responses_api_payload(payload, reasoning_summary)
+        )
+        endpoint_url = f"{url}/responses"
+    else:
+        request_payload = json.dumps(payload)
+        endpoint_url = f"{url}/chat/completions"
 
     r = None
     session = None
@@ -699,8 +845,8 @@ async def generate_chat_completion(
 
         r = await session.request(
             method="POST",
-            url=f"{url}/chat/completions",
-            data=payload,
+            url=endpoint_url,
+            data=request_payload,
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
@@ -728,8 +874,15 @@ async def generate_chat_completion(
         # Check if response is SSE
         if "text/event-stream" in r.headers.get("Content-Type", ""):
             streaming = True
+            # Responses API events are converted to Chat Completions delta format
+            # so that middleware.py stream_body_handler can process them unchanged
+            stream_content = (
+                responses_api_stream_adapter(r.content)
+                if use_responses_api
+                else r.content
+            )
             return StreamingResponse(
-                r.content,
+                stream_content,
                 status_code=r.status,
                 headers=dict(r.headers),
                 background=BackgroundTask(

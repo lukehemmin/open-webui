@@ -17,6 +17,7 @@
 		stop: null,
 		temperature: null,
 		reasoning_effort: null,
+		reasoning_summary: null,
 		logit_bias: null,
 		frequency_penalty: null,
 		repeat_last_n: null,
@@ -294,6 +295,51 @@
 						bind:value={params.reasoning_effort}
 						autocomplete="off"
 					/>
+				</div>
+			</div>
+		{/if}
+	</div>
+
+	<div class=" py-0.5 w-full justify-between">
+		<Tooltip
+			content={$i18n.t(
+				'Enable reasoning summary to see thinking content from OpenAI reasoning models (o3, o4-mini, etc.). Requires OpenAI Responses API. Use "auto" for automatic selection, "concise" for brief summaries, or "detailed" for full reasoning.'
+			)}
+			placement="top-start"
+			className="inline-tooltip"
+		>
+			<div class="flex w-full justify-between">
+				<div class=" self-center text-xs font-medium">
+					{$i18n.t('Reasoning Summary')}
+				</div>
+				<button
+					class="p-1 px-3 text-xs flex rounded-sm transition shrink-0 outline-hidden"
+					type="button"
+					on:click={() => {
+						params.reasoning_summary =
+							(params?.reasoning_summary ?? null) === null ? 'auto' : null;
+					}}
+				>
+					{#if (params?.reasoning_summary ?? null) === null}
+						<span class="ml-2 self-center"> {$i18n.t('Default')} </span>
+					{:else}
+						<span class="ml-2 self-center"> {$i18n.t('Custom')} </span>
+					{/if}
+				</button>
+			</div>
+		</Tooltip>
+
+		{#if (params?.reasoning_summary ?? null) !== null}
+			<div class="flex mt-0.5 space-x-2">
+				<div class=" flex-1">
+					<select
+						class="w-full rounded-lg py-2 px-1 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden"
+						bind:value={params.reasoning_summary}
+					>
+						<option value="auto">{$i18n.t('Auto')}</option>
+						<option value="concise">{$i18n.t('Concise')}</option>
+						<option value="detailed">{$i18n.t('Detailed')}</option>
+					</select>
 				</div>
 			</div>
 		{/if}

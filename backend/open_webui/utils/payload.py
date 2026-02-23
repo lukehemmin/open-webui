@@ -60,6 +60,7 @@ def apply_model_params_to_body_openai(params: dict, form_data: dict) -> dict:
         "max_tokens": int,
         "frequency_penalty": float,
         "reasoning_effort": str,
+        "reasoning_summary": str,
         "seed": lambda x: x,
         "stop": lambda x: [bytes(s, "utf-8").decode("unicode_escape") for s in x],
         "logit_bias": lambda x: x,
