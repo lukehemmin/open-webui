@@ -31,7 +31,12 @@ from open_webui.env import (
 )
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse, Response
-from open_webui.config import OPENID_PROVIDER_URL, ENABLE_OAUTH_SIGNUP, ENABLE_LDAP
+from open_webui.config import (
+    OPENID_PROVIDER_URL,
+    ENABLE_OAUTH_SIGNUP,
+    ENABLE_LDAP,
+    load_oauth_providers,
+)
 from pydantic import BaseModel
 from open_webui.utils.misc import parse_duration, validate_email_format
 from open_webui.utils.auth import (
@@ -830,6 +835,58 @@ async def update_ldap_config(
 ):
     request.app.state.config.ENABLE_LDAP = form_data.enable_ldap
     return {"ENABLE_LDAP": request.app.state.config.ENABLE_LDAP}
+
+
+############################
+# Google OAuth Config
+############################
+
+
+@router.get("/admin/config/oauth/google")
+async def get_google_oauth_config(request: Request, user=Depends(get_admin_user)):
+    return {
+        "ENABLE_OAUTH_SIGNUP": request.app.state.config.ENABLE_OAUTH_SIGNUP,
+        "OAUTH_MERGE_ACCOUNTS_BY_EMAIL": request.app.state.config.OAUTH_MERGE_ACCOUNTS_BY_EMAIL,
+        "GOOGLE_CLIENT_ID": request.app.state.config.GOOGLE_CLIENT_ID,
+        "GOOGLE_CLIENT_SECRET": request.app.state.config.GOOGLE_CLIENT_SECRET,
+        "GOOGLE_OAUTH_SCOPE": request.app.state.config.GOOGLE_OAUTH_SCOPE,
+        "GOOGLE_REDIRECT_URI": request.app.state.config.GOOGLE_REDIRECT_URI,
+    }
+
+
+class GoogleOAuthConfig(BaseModel):
+    ENABLE_OAUTH_SIGNUP: bool
+    OAUTH_MERGE_ACCOUNTS_BY_EMAIL: bool
+    GOOGLE_CLIENT_ID: str
+    GOOGLE_CLIENT_SECRET: str
+    GOOGLE_OAUTH_SCOPE: str
+    GOOGLE_REDIRECT_URI: str
+
+
+@router.post("/admin/config/oauth/google")
+async def update_google_oauth_config(
+    request: Request, form_data: GoogleOAuthConfig, user=Depends(get_admin_user)
+):
+    request.app.state.config.ENABLE_OAUTH_SIGNUP = form_data.ENABLE_OAUTH_SIGNUP
+    request.app.state.config.OAUTH_MERGE_ACCOUNTS_BY_EMAIL = (
+        form_data.OAUTH_MERGE_ACCOUNTS_BY_EMAIL
+    )
+    request.app.state.config.GOOGLE_CLIENT_ID = form_data.GOOGLE_CLIENT_ID
+    request.app.state.config.GOOGLE_CLIENT_SECRET = form_data.GOOGLE_CLIENT_SECRET
+    request.app.state.config.GOOGLE_OAUTH_SCOPE = form_data.GOOGLE_OAUTH_SCOPE
+    request.app.state.config.GOOGLE_REDIRECT_URI = form_data.GOOGLE_REDIRECT_URI
+
+    load_oauth_providers()
+    request.app.state.oauth_manager.reload_providers()
+
+    return {
+        "ENABLE_OAUTH_SIGNUP": request.app.state.config.ENABLE_OAUTH_SIGNUP,
+        "OAUTH_MERGE_ACCOUNTS_BY_EMAIL": request.app.state.config.OAUTH_MERGE_ACCOUNTS_BY_EMAIL,
+        "GOOGLE_CLIENT_ID": request.app.state.config.GOOGLE_CLIENT_ID,
+        "GOOGLE_CLIENT_SECRET": request.app.state.config.GOOGLE_CLIENT_SECRET,
+        "GOOGLE_OAUTH_SCOPE": request.app.state.config.GOOGLE_OAUTH_SCOPE,
+        "GOOGLE_REDIRECT_URI": request.app.state.config.GOOGLE_REDIRECT_URI,
+    }
 
 
 ############################

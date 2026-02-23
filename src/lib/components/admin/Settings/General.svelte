@@ -8,7 +8,9 @@
 		getLdapServer,
 		updateAdminConfig,
 		updateLdapConfig,
-		updateLdapServer
+		updateLdapServer,
+		getGoogleOAuthConfig,
+		updateGoogleOAuthConfig
 	} from '$lib/apis/auths';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
@@ -31,6 +33,16 @@
 
 	let adminConfig = null;
 	let webhookUrl = '';
+
+	// Google OAuth
+	let GOOGLE_OAUTH_CONFIG = {
+		ENABLE_OAUTH_SIGNUP: false,
+		OAUTH_MERGE_ACCOUNTS_BY_EMAIL: false,
+		GOOGLE_CLIENT_ID: '',
+		GOOGLE_CLIENT_SECRET: '',
+		GOOGLE_OAUTH_SCOPE: 'openid email profile',
+		GOOGLE_REDIRECT_URI: ''
+	};
 
 	// LDAP
 	let ENABLE_LDAP = false;
@@ -75,10 +87,23 @@
 		}
 	};
 
+	const updateGoogleOAuthHandler = async () => {
+		const res = await updateGoogleOAuthConfig(localStorage.token, GOOGLE_OAUTH_CONFIG).catch(
+			(error) => {
+				toast.error(`${error}`);
+				return null;
+			}
+		);
+		if (res) {
+			GOOGLE_OAUTH_CONFIG = res;
+		}
+	};
+
 	const updateHandler = async () => {
 		webhookUrl = await updateWebhookUrl(localStorage.token, webhookUrl);
 		const res = await updateAdminConfig(localStorage.token, adminConfig);
 		await updateLdapServerHandler();
+		await updateGoogleOAuthHandler();
 
 		if (res) {
 			saveHandler();
@@ -97,6 +122,10 @@
 
 			(async () => {
 				webhookUrl = await getWebhookUrl(localStorage.token);
+			})(),
+
+			(async () => {
+				GOOGLE_OAUTH_CONFIG = await getGoogleOAuthConfig(localStorage.token);
 			})(),
 			(async () => {
 				LDAP_SERVER = await getLdapServer(localStorage.token);
@@ -366,6 +395,102 @@
 							<span class=" text-gray-300 font-medium"
 								>{$i18n.t("'s', 'm', 'h', 'd', 'w' or '-1' for no expiration.")}</span
 							>
+						</div>
+					</div>
+
+					<div class=" space-y-3">
+						<div class="mt-2 space-y-2 pr-1.5">
+							<div class="flex justify-between items-center text-sm">
+								<div class="font-medium">{$i18n.t('Google OAuth')}</div>
+							</div>
+
+							<div class="flex flex-col gap-2">
+								<div class="flex w-full justify-between pr-2">
+									<div class="self-center text-xs font-medium">
+										{$i18n.t('Status')}
+									</div>
+									<div class="self-center text-xs">
+										{#if GOOGLE_OAUTH_CONFIG.GOOGLE_CLIENT_ID && GOOGLE_OAUTH_CONFIG.GOOGLE_CLIENT_SECRET}
+											<span
+												class="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 font-medium"
+											>
+												{$i18n.t('Enabled')}
+											</span>
+										{:else}
+											<span
+												class="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 font-medium"
+											>
+												{$i18n.t('Disabled')}
+											</span>
+										{/if}
+									</div>
+								</div>
+
+								<div class="flex w-full gap-2">
+									<div class="w-full">
+										<div class="self-center text-xs font-medium min-w-fit mb-1">
+											{$i18n.t('Client ID')}
+										</div>
+										<input
+											class="w-full bg-transparent outline-hidden py-0.5 text-sm"
+											placeholder={$i18n.t('Enter Google Client ID')}
+											bind:value={GOOGLE_OAUTH_CONFIG.GOOGLE_CLIENT_ID}
+										/>
+									</div>
+								</div>
+
+								<div class="flex w-full gap-2">
+									<div class="w-full">
+										<div class="self-center text-xs font-medium min-w-fit mb-1">
+											{$i18n.t('Client Secret')}
+										</div>
+										<SensitiveInput
+											placeholder={$i18n.t('Enter Google Client Secret')}
+											bind:value={GOOGLE_OAUTH_CONFIG.GOOGLE_CLIENT_SECRET}
+										/>
+									</div>
+								</div>
+
+								<div class="flex w-full gap-2">
+									<div class="w-full">
+										<div class="self-center text-xs font-medium min-w-fit mb-1">
+											{$i18n.t('Redirect URI')}
+										</div>
+										<Tooltip
+											content={$i18n.t(
+												'Leave empty to use the default redirect URI. e.g.) https://yourdomain.com/oauth/google/callback'
+											)}
+											placement="top-start"
+										>
+											<input
+												class="w-full bg-transparent outline-hidden py-0.5 text-sm"
+												placeholder={$i18n.t(
+													'Leave empty for auto (https://yourdomain.com/oauth/google/callback)'
+												)}
+												bind:value={GOOGLE_OAUTH_CONFIG.GOOGLE_REDIRECT_URI}
+											/>
+										</Tooltip>
+									</div>
+								</div>
+
+								{#if GOOGLE_OAUTH_CONFIG.GOOGLE_CLIENT_ID && GOOGLE_OAUTH_CONFIG.GOOGLE_CLIENT_SECRET}
+									<div class="flex w-full justify-between pr-2">
+										<div class="self-center text-xs font-medium">
+											{$i18n.t('Allow OAuth Signup')}
+										</div>
+										<Switch bind:state={GOOGLE_OAUTH_CONFIG.ENABLE_OAUTH_SIGNUP} />
+									</div>
+
+									<div class="flex w-full justify-between pr-2">
+										<div class="self-center text-xs font-medium">
+											{$i18n.t('Merge Accounts by Email')}
+										</div>
+										<Switch
+											bind:state={GOOGLE_OAUTH_CONFIG.OAUTH_MERGE_ACCOUNTS_BY_EMAIL}
+										/>
+									</div>
+								{/if}
+							</div>
 						</div>
 					</div>
 

@@ -272,6 +272,12 @@ from open_webui.config import (
     MODEL_ORDER_LIST,
     EVALUATION_ARENA_MODELS,
     # WebUI (OAuth)
+    ENABLE_OAUTH_SIGNUP,
+    OAUTH_MERGE_ACCOUNTS_BY_EMAIL,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    GOOGLE_OAUTH_SCOPE,
+    GOOGLE_REDIRECT_URI,
     ENABLE_OAUTH_ROLE_MANAGEMENT,
     OAUTH_ROLES_CLAIM,
     OAUTH_EMAIL_CLAIM,
@@ -279,6 +285,7 @@ from open_webui.config import (
     OAUTH_USERNAME_CLAIM,
     OAUTH_ALLOWED_ROLES,
     OAUTH_ADMIN_ROLES,
+    load_oauth_providers,
     # WebUI (LDAP)
     ENABLE_LDAP,
     LDAP_SERVER_LABEL,
@@ -445,6 +452,7 @@ app = FastAPI(
 )
 
 oauth_manager = OAuthManager(app)
+app.state.oauth_manager = oauth_manager
 
 app.state.config = AppConfig(
     redis_url=REDIS_URL,
@@ -553,6 +561,13 @@ app.state.config.EVALUATION_ARENA_MODELS = EVALUATION_ARENA_MODELS
 app.state.config.OAUTH_USERNAME_CLAIM = OAUTH_USERNAME_CLAIM
 app.state.config.OAUTH_PICTURE_CLAIM = OAUTH_PICTURE_CLAIM
 app.state.config.OAUTH_EMAIL_CLAIM = OAUTH_EMAIL_CLAIM
+
+app.state.config.ENABLE_OAUTH_SIGNUP = ENABLE_OAUTH_SIGNUP
+app.state.config.OAUTH_MERGE_ACCOUNTS_BY_EMAIL = OAUTH_MERGE_ACCOUNTS_BY_EMAIL
+app.state.config.GOOGLE_CLIENT_ID = GOOGLE_CLIENT_ID
+app.state.config.GOOGLE_CLIENT_SECRET = GOOGLE_CLIENT_SECRET
+app.state.config.GOOGLE_OAUTH_SCOPE = GOOGLE_OAUTH_SCOPE
+app.state.config.GOOGLE_REDIRECT_URI = GOOGLE_REDIRECT_URI
 
 app.state.config.ENABLE_OAUTH_ROLE_MANAGEMENT = ENABLE_OAUTH_ROLE_MANAGEMENT
 app.state.config.OAUTH_ROLES_CLAIM = OAUTH_ROLES_CLAIM

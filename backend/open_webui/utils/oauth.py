@@ -79,6 +79,11 @@ class OAuthManager:
     def get_client(self, provider_name):
         return self.oauth.create_client(provider_name)
 
+    def reload_providers(self):
+        self.oauth = OAuth()
+        for _, provider_config in OAUTH_PROVIDERS.items():
+            provider_config["register"](self.oauth)
+
     def get_user_role(self, user, user_data):
         if user and Users.get_num_users() == 1:
             # If the user is the only user, assign the role "admin" - actually repairs role for single user on login
