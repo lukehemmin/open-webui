@@ -1,5 +1,73 @@
 import { OPENAI_API_BASE_URL, WEBUI_API_BASE_URL, WEBUI_BASE_URL } from '$lib/constants';
 
+const CHATGPT_OAUTH_BASE_URL = `${WEBUI_API_BASE_URL}/chatgpt-oauth`;
+
+export const getChatGPTOAuthStatus = async (token: string = '') => {
+	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/status`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
+};
+
+export const initiateChatGPTOAuth = async (token: string = '') => {
+	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/login`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	});
+	if (!res.ok) throw await res.json();
+	return res.json(); // { auth_url, redirect_uri }
+};
+
+export const disconnectChatGPTOAuth = async (token: string = '') => {
+	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/disconnect`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
+};
+
+export const getChatGPTOAuthConfig = async (token: string = '') => {
+	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/config`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	});
+	if (!res.ok) throw await res.json();
+	return res.json(); // { redirect_uri }
+};
+
+export const updateChatGPTOAuthConfig = async (token: string = '', redirectUri: string) => {
+	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/config`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		},
+		body: JSON.stringify({ redirect_uri: redirectUri })
+	});
+	if (!res.ok) throw await res.json();
+	return res.json();
+};
+
 export const getOpenAIConfig = async (token: string = '') => {
 	let error = null;
 

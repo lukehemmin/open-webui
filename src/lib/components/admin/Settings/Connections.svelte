@@ -5,7 +5,16 @@
 	const dispatch = createEventDispatcher();
 
 	import { getOllamaConfig, updateOllamaConfig } from '$lib/apis/ollama';
-	import { getOpenAIConfig, updateOpenAIConfig, getOpenAIModels } from '$lib/apis/openai';
+	import {
+		getOpenAIConfig,
+		updateOpenAIConfig,
+		getOpenAIModels,
+		getChatGPTOAuthStatus,
+		initiateChatGPTOAuth,
+		disconnectChatGPTOAuth,
+		getChatGPTOAuthConfig,
+		updateChatGPTOAuthConfig
+	} from '$lib/apis/openai';
 	import { getModels as _getModels } from '$lib/apis';
 	import { getDirectConnectionsConfig, setDirectConnectionsConfig } from '$lib/apis/configs';
 
@@ -46,6 +55,88 @@
 	let pipelineUrls = {};
 	let showAddOpenAIConnectionModal = false;
 	let showAddOllamaConnectionModal = false;
+
+	// ChatGPT OAuth
+	let chatgptOAuthStatus: { connected: boolean; expires_at: number | null; expired: boolean } | null = null;
+	let chatgptOAuthConfig: { redirect_uri: string } = { redirect_uri: '' };
+	let chatgptOAuthCustomRedirectUri = '';
+	let chatgptOAuthPollingInterval: ReturnType<typeof setInterval> | null = null;
+	let showRedirectUriHelp = false;
+
+	const loadChatGPTOAuthStatus = async () => {
+		try {
+			chatgptOAuthStatus = await getChatGPTOAuthStatus(localStorage.token);
+		} catch (e) {
+			console.error('Failed to load ChatGPT OAuth status', e);
+		}
+	};
+
+	const loadChatGPTOAuthConfig = async () => {
+		try {
+			chatgptOAuthConfig = await getChatGPTOAuthConfig(localStorage.token);
+			chatgptOAuthCustomRedirectUri = chatgptOAuthConfig.redirect_uri || '';
+		} catch (e) {
+			console.error('Failed to load ChatGPT OAuth config', e);
+		}
+	};
+
+	const saveChatGPTOAuthConfig = async () => {
+		try {
+			await updateChatGPTOAuthConfig(localStorage.token, chatgptOAuthCustomRedirectUri);
+			toast.success($i18n.t('Saved'));
+		} catch (e) {
+			toast.error(`${e}`);
+		}
+	};
+
+	const connectChatGPT = async () => {
+		try {
+			// redirect_uri 변경사항 먼저 저장
+			await updateChatGPTOAuthConfig(localStorage.token, chatgptOAuthCustomRedirectUri);
+			const data = await initiateChatGPTOAuth(localStorage.token);
+			window.open(data.auth_url, '_blank');
+
+			// 연결 완료 폴링 (10초마다, 최대 5분)
+			let attempts = 0;
+			chatgptOAuthPollingInterval = setInterval(async () => {
+				attempts++;
+				await loadChatGPTOAuthStatus();
+				if (chatgptOAuthStatus?.connected) {
+					clearInterval(chatgptOAuthPollingInterval!);
+					chatgptOAuthPollingInterval = null;
+					toast.success($i18n.t('ChatGPT account connected successfully'));
+					models.set(await getModels());
+					// OpenAI 연결 목록 갱신
+					const openaiConfig = await getOpenAIConfig(localStorage.token);
+					OPENAI_API_BASE_URLS = openaiConfig.OPENAI_API_BASE_URLS;
+					OPENAI_API_KEYS = openaiConfig.OPENAI_API_KEYS;
+					OPENAI_API_CONFIGS = openaiConfig.OPENAI_API_CONFIGS;
+				}
+				if (attempts >= 30) {
+					clearInterval(chatgptOAuthPollingInterval!);
+					chatgptOAuthPollingInterval = null;
+				}
+			}, 10000);
+		} catch (e) {
+			toast.error(`${e}`);
+		}
+	};
+
+	const disconnectChatGPT = async () => {
+		try {
+			await disconnectChatGPTOAuth(localStorage.token);
+			await loadChatGPTOAuthStatus();
+			// OpenAI 연결 목록 갱신
+			const openaiConfig = await getOpenAIConfig(localStorage.token);
+			OPENAI_API_BASE_URLS = openaiConfig.OPENAI_API_BASE_URLS;
+			OPENAI_API_KEYS = openaiConfig.OPENAI_API_KEYS;
+			OPENAI_API_CONFIGS = openaiConfig.OPENAI_API_CONFIGS;
+			models.set(await getModels());
+			toast.success($i18n.t('ChatGPT account disconnected'));
+		} catch (e) {
+			toast.error(`${e}`);
+		}
+	};
 
 	const updateOpenAIHandler = async () => {
 		if (ENABLE_OPENAI_API !== null) {
@@ -149,7 +240,9 @@
 				})(),
 				(async () => {
 					directConnectionsConfig = await getDirectConnectionsConfig(localStorage.token);
-				})()
+				})(),
+				loadChatGPTOAuthStatus(),
+				loadChatGPTOAuthConfig()
 			]);
 
 			ENABLE_OPENAI_API = openaiConfig.ENABLE_OPENAI_API;
@@ -215,6 +308,92 @@
 
 <form class="flex flex-col h-full justify-between text-sm" on:submit|preventDefault={submitHandler}>
 	<div class=" overflow-y-scroll scrollbar-hidden h-full">
+		<!-- ChatGPT OAuth 연결 섹션 -->
+		<div class="my-2 pr-1.5">
+			<div class="flex justify-between items-center text-sm mb-1.5">
+				<div class="font-medium">ChatGPT {$i18n.t('Account')}</div>
+			</div>
+
+			<!-- Redirect URI 설정 -->
+			<div class="mb-2">
+				<div class="flex items-center gap-1 mb-1">
+					<label class="text-xs text-gray-500 dark:text-gray-400">
+						Redirect URI
+					</label>
+					<button
+						type="button"
+						class="text-xs text-blue-500 underline"
+						on:click={() => { showRedirectUriHelp = !showRedirectUriHelp; }}
+					>
+						{showRedirectUriHelp ? $i18n.t('Hide') : $i18n.t('Help')}
+					</button>
+				</div>
+				{#if showRedirectUriHelp}
+					<div class="text-xs text-gray-500 dark:text-gray-400 mb-1 p-2 bg-gray-100 dark:bg-gray-800 rounded">
+						<p><b>localhost</b>: 비워두면 자동 감지 (예: <code>http://localhost:8080/api/v1/chatgpt-oauth/callback</code>)</p>
+						<p class="mt-1"><b>VPS</b>: 서버 URL 직접 입력 (예: <code>https://myserver.com/api/v1/chatgpt-oauth/callback</code>)</p>
+					</div>
+				{/if}
+				<div class="flex gap-2">
+					<input
+						class="flex-1 w-full rounded-lg py-1.5 px-3 text-sm bg-gray-50 dark:bg-gray-850 dark:text-gray-200 outline-none"
+						type="text"
+						placeholder="자동 감지 (비워두면 서버 URL 사용)"
+						bind:value={chatgptOAuthCustomRedirectUri}
+					/>
+					<button
+						type="button"
+						class="px-3 py-1 text-xs rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
+						on:click={saveChatGPTOAuthConfig}
+					>
+						{$i18n.t('Save')}
+					</button>
+				</div>
+			</div>
+
+			<!-- 연결 상태 -->
+			{#if chatgptOAuthStatus?.connected && !chatgptOAuthStatus?.expired}
+				<div class="flex items-center justify-between p-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+					<div class="flex items-center gap-2">
+						<div class="w-2 h-2 rounded-full bg-green-500"></div>
+						<span class="text-sm text-green-700 dark:text-green-300">{$i18n.t('Connected')}</span>
+						{#if chatgptOAuthStatus?.expires_at}
+							<span class="text-xs text-gray-400">
+								(exp: {new Date(chatgptOAuthStatus.expires_at * 1000).toLocaleString()})
+							</span>
+						{/if}
+					</div>
+					<button
+						type="button"
+						class="text-xs text-red-500 hover:text-red-700 underline"
+						on:click={disconnectChatGPT}
+					>
+						{$i18n.t('Disconnect')}
+					</button>
+				</div>
+			{:else}
+				<button
+					type="button"
+					class="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm"
+					on:click={connectChatGPT}
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4">
+						<circle cx="12" cy="12" r="10"/>
+						<line x1="12" y1="8" x2="12" y2="16"/>
+						<line x1="8" y1="12" x2="16" y2="12"/>
+					</svg>
+					{$i18n.t('Connect ChatGPT Account')}
+				</button>
+				{#if chatgptOAuthStatus?.connected && chatgptOAuthStatus?.expired}
+					<p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1 text-center">
+						토큰이 만료되었습니다. 다시 연결해주세요.
+					</p>
+				{/if}
+			{/if}
+		</div>
+
+		<hr class="border-gray-100 dark:border-gray-850 my-1" />
+
 		{#if ENABLE_OPENAI_API !== null && ENABLE_OLLAMA_API !== null && directConnectionsConfig !== null}
 			<div class="my-2">
 				<div class="mt-2 space-y-2 pr-1.5">

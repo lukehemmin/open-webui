@@ -2693,3 +2693,31 @@ LDAP_CA_CERT_FILE = PersistentConfig(
 LDAP_CIPHERS = PersistentConfig(
     "LDAP_CIPHERS", "ldap.server.ciphers", os.environ.get("LDAP_CIPHERS", "ALL")
 )
+
+####################################
+# ChatGPT OAuth (Codex)
+####################################
+
+CHATGPT_OAUTH_ACCESS_TOKEN = PersistentConfig(
+    "CHATGPT_OAUTH_ACCESS_TOKEN",
+    "chatgpt_oauth.access_token",
+    os.environ.get("CHATGPT_OAUTH_ACCESS_TOKEN", ""),
+)
+
+CHATGPT_OAUTH_REFRESH_TOKEN = PersistentConfig(
+    "CHATGPT_OAUTH_REFRESH_TOKEN",
+    "chatgpt_oauth.refresh_token",
+    os.environ.get("CHATGPT_OAUTH_REFRESH_TOKEN", ""),
+)
+
+CHATGPT_OAUTH_EXPIRES_AT = PersistentConfig(
+    "CHATGPT_OAUTH_EXPIRES_AT",
+    "chatgpt_oauth.expires_at",
+    float(os.environ.get("CHATGPT_OAUTH_EXPIRES_AT", "0")),
+)
+
+CHATGPT_OAUTH_REDIRECT_URI = PersistentConfig(
+    "CHATGPT_OAUTH_REDIRECT_URI",
+    "chatgpt_oauth.redirect_uri",
+    os.environ.get("CHATGPT_OAUTH_REDIRECT_URI", ""),
+)

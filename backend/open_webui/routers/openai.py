@@ -42,6 +42,10 @@ from open_webui.utils.misc import (
 
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.access_control import has_access
+from open_webui.routers.chatgpt_oauth import (
+    CHATGPT_OAUTH_PLACEHOLDER_KEY,
+    refresh_chatgpt_token,
+)
 
 
 log = logging.getLogger(__name__)
@@ -417,6 +421,13 @@ async def get_all_models_responses(request: Request, user: UserModel) -> list:
         else:
             request.app.state.config.OPENAI_API_KEYS += [""] * (num_urls - num_keys)
 
+    # Pre-resolve ChatGPT OAuth placeholder keys (async token refresh if needed)
+    resolved_keys = list(request.app.state.config.OPENAI_API_KEYS)
+    for _idx, _key in enumerate(resolved_keys):
+        if _key == CHATGPT_OAUTH_PLACEHOLDER_KEY:
+            resolved_oauth_key = await refresh_chatgpt_token(request.app)
+            resolved_keys[_idx] = resolved_oauth_key if resolved_oauth_key else ""
+
     request_tasks = []
     for idx, url in enumerate(request.app.state.config.OPENAI_API_BASE_URLS):
         if (str(idx) not in request.app.state.config.OPENAI_API_CONFIGS) and (
@@ -425,7 +436,7 @@ async def get_all_models_responses(request: Request, user: UserModel) -> list:
             request_tasks.append(
                 send_get_request(
                     f"{url}/models",
-                    request.app.state.config.OPENAI_API_KEYS[idx],
+                    resolved_keys[idx],
                     user=user,
                 )
             )
@@ -445,7 +456,7 @@ async def get_all_models_responses(request: Request, user: UserModel) -> list:
                     request_tasks.append(
                         send_get_request(
                             f"{url}/models",
-                            request.app.state.config.OPENAI_API_KEYS[idx],
+                            resolved_keys[idx],
                             user=user,
                         )
                     )
@@ -795,6 +806,15 @@ async def generate_chat_completion(
 
     url = request.app.state.config.OPENAI_API_BASE_URLS[idx]
     key = request.app.state.config.OPENAI_API_KEYS[idx]
+
+    # Resolve ChatGPT OAuth placeholder key to actual access token
+    if key == CHATGPT_OAUTH_PLACEHOLDER_KEY:
+        key = await refresh_chatgpt_token(request.app)
+        if not key:
+            raise HTTPException(
+                status_code=401,
+                detail="ChatGPT OAuth token is unavailable. Please reconnect your ChatGPT account.",
+            )
 
     # Fix: o1, o3, o4 models do not support the "max_tokens" parameter
     # Bug fix: startswith("o3-") missed "o3" (exact) and "o4-mini"; now uses ("o1", "o3", "o4")
