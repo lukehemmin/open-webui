@@ -10,10 +10,7 @@
 		updateOpenAIConfig,
 		getOpenAIModels,
 		getChatGPTOAuthStatus,
-		initiateChatGPTOAuth,
-		disconnectChatGPTOAuth,
-		getChatGPTOAuthConfig,
-		updateChatGPTOAuthConfig
+		disconnectChatGPTOAuth
 	} from '$lib/apis/openai';
 	import { getModels as _getModels } from '$lib/apis';
 	import { getDirectConnectionsConfig, setDirectConnectionsConfig } from '$lib/apis/configs';
@@ -26,7 +23,9 @@
 	import Plus from '$lib/components/icons/Plus.svelte';
 
 	import OpenAIConnection from './Connections/OpenAIConnection.svelte';
+	import ChatGPTConnection from './Connections/ChatGPTConnection.svelte';
 	import AddConnectionModal from '$lib/components/AddConnectionModal.svelte';
+	import AddChatGPTConnectionModal from './Connections/AddChatGPTConnectionModal.svelte';
 	import OllamaConnection from './Connections/OllamaConnection.svelte';
 
 	const i18n = getContext('i18n');
@@ -55,70 +54,16 @@
 	let pipelineUrls = {};
 	let showAddOpenAIConnectionModal = false;
 	let showAddOllamaConnectionModal = false;
+	let showAddChatGPTConnectionModal = false;
 
 	// ChatGPT OAuth
 	let chatgptOAuthStatus: { connected: boolean; expires_at: number | null; expired: boolean } | null = null;
-	let chatgptOAuthConfig: { redirect_uri: string } = { redirect_uri: '' };
-	let chatgptOAuthCustomRedirectUri = '';
-	let chatgptOAuthPollingInterval: ReturnType<typeof setInterval> | null = null;
-	let showRedirectUriHelp = false;
 
 	const loadChatGPTOAuthStatus = async () => {
 		try {
 			chatgptOAuthStatus = await getChatGPTOAuthStatus(localStorage.token);
 		} catch (e) {
 			console.error('Failed to load ChatGPT OAuth status', e);
-		}
-	};
-
-	const loadChatGPTOAuthConfig = async () => {
-		try {
-			chatgptOAuthConfig = await getChatGPTOAuthConfig(localStorage.token);
-			chatgptOAuthCustomRedirectUri = chatgptOAuthConfig.redirect_uri || '';
-		} catch (e) {
-			console.error('Failed to load ChatGPT OAuth config', e);
-		}
-	};
-
-	const saveChatGPTOAuthConfig = async () => {
-		try {
-			await updateChatGPTOAuthConfig(localStorage.token, chatgptOAuthCustomRedirectUri);
-			toast.success($i18n.t('Saved'));
-		} catch (e) {
-			toast.error(`${e}`);
-		}
-	};
-
-	const connectChatGPT = async () => {
-		try {
-			// redirect_uri 변경사항 먼저 저장
-			await updateChatGPTOAuthConfig(localStorage.token, chatgptOAuthCustomRedirectUri);
-			const data = await initiateChatGPTOAuth(localStorage.token);
-			window.open(data.auth_url, '_blank');
-
-			// 연결 완료 폴링 (10초마다, 최대 5분)
-			let attempts = 0;
-			chatgptOAuthPollingInterval = setInterval(async () => {
-				attempts++;
-				await loadChatGPTOAuthStatus();
-				if (chatgptOAuthStatus?.connected) {
-					clearInterval(chatgptOAuthPollingInterval!);
-					chatgptOAuthPollingInterval = null;
-					toast.success($i18n.t('ChatGPT account connected successfully'));
-					models.set(await getModels());
-					// OpenAI 연결 목록 갱신
-					const openaiConfig = await getOpenAIConfig(localStorage.token);
-					OPENAI_API_BASE_URLS = openaiConfig.OPENAI_API_BASE_URLS;
-					OPENAI_API_KEYS = openaiConfig.OPENAI_API_KEYS;
-					OPENAI_API_CONFIGS = openaiConfig.OPENAI_API_CONFIGS;
-				}
-				if (attempts >= 30) {
-					clearInterval(chatgptOAuthPollingInterval!);
-					chatgptOAuthPollingInterval = null;
-				}
-			}, 10000);
-		} catch (e) {
-			toast.error(`${e}`);
 		}
 	};
 
@@ -136,6 +81,15 @@
 		} catch (e) {
 			toast.error(`${e}`);
 		}
+	};
+
+	const onChatGPTConnected = async () => {
+		await loadChatGPTOAuthStatus();
+		const openaiConfig = await getOpenAIConfig(localStorage.token);
+		OPENAI_API_BASE_URLS = openaiConfig.OPENAI_API_BASE_URLS;
+		OPENAI_API_KEYS = openaiConfig.OPENAI_API_KEYS;
+		OPENAI_API_CONFIGS = openaiConfig.OPENAI_API_CONFIGS;
+		models.set(await getModels());
 	};
 
 	const updateOpenAIHandler = async () => {
@@ -241,8 +195,7 @@
 				(async () => {
 					directConnectionsConfig = await getDirectConnectionsConfig(localStorage.token);
 				})(),
-				loadChatGPTOAuthStatus(),
-				loadChatGPTOAuthConfig()
+				loadChatGPTOAuthStatus()
 			]);
 
 			ENABLE_OPENAI_API = openaiConfig.ENABLE_OPENAI_API;
@@ -306,94 +259,13 @@
 	onSubmit={addOllamaConnectionHandler}
 />
 
+<AddChatGPTConnectionModal
+	bind:show={showAddChatGPTConnectionModal}
+	onConnected={onChatGPTConnected}
+/>
+
 <form class="flex flex-col h-full justify-between text-sm" on:submit|preventDefault={submitHandler}>
 	<div class=" overflow-y-scroll scrollbar-hidden h-full">
-		<!-- ChatGPT OAuth 연결 섹션 -->
-		<div class="my-2 pr-1.5">
-			<div class="flex justify-between items-center text-sm mb-1.5">
-				<div class="font-medium">ChatGPT {$i18n.t('Account')}</div>
-			</div>
-
-			<!-- Redirect URI 설정 -->
-			<div class="mb-2">
-				<div class="flex items-center gap-1 mb-1">
-					<label class="text-xs text-gray-500 dark:text-gray-400">
-						Redirect URI
-					</label>
-					<button
-						type="button"
-						class="text-xs text-blue-500 underline"
-						on:click={() => { showRedirectUriHelp = !showRedirectUriHelp; }}
-					>
-						{showRedirectUriHelp ? $i18n.t('Hide') : $i18n.t('Help')}
-					</button>
-				</div>
-				{#if showRedirectUriHelp}
-					<div class="text-xs text-gray-500 dark:text-gray-400 mb-1 p-2 bg-gray-100 dark:bg-gray-800 rounded">
-						<p><b>localhost</b>: 비워두면 자동 감지 (예: <code>http://localhost:8080/api/v1/chatgpt-oauth/callback</code>)</p>
-						<p class="mt-1"><b>VPS</b>: 서버 URL 직접 입력 (예: <code>https://myserver.com/api/v1/chatgpt-oauth/callback</code>)</p>
-					</div>
-				{/if}
-				<div class="flex gap-2">
-					<input
-						class="flex-1 w-full rounded-lg py-1.5 px-3 text-sm bg-gray-50 dark:bg-gray-850 dark:text-gray-200 outline-none"
-						type="text"
-						placeholder="자동 감지 (비워두면 서버 URL 사용)"
-						bind:value={chatgptOAuthCustomRedirectUri}
-					/>
-					<button
-						type="button"
-						class="px-3 py-1 text-xs rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
-						on:click={saveChatGPTOAuthConfig}
-					>
-						{$i18n.t('Save')}
-					</button>
-				</div>
-			</div>
-
-			<!-- 연결 상태 -->
-			{#if chatgptOAuthStatus?.connected && !chatgptOAuthStatus?.expired}
-				<div class="flex items-center justify-between p-2 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
-					<div class="flex items-center gap-2">
-						<div class="w-2 h-2 rounded-full bg-green-500"></div>
-						<span class="text-sm text-green-700 dark:text-green-300">{$i18n.t('Connected')}</span>
-						{#if chatgptOAuthStatus?.expires_at}
-							<span class="text-xs text-gray-400">
-								(exp: {new Date(chatgptOAuthStatus.expires_at * 1000).toLocaleString()})
-							</span>
-						{/if}
-					</div>
-					<button
-						type="button"
-						class="text-xs text-red-500 hover:text-red-700 underline"
-						on:click={disconnectChatGPT}
-					>
-						{$i18n.t('Disconnect')}
-					</button>
-				</div>
-			{:else}
-				<button
-					type="button"
-					class="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm"
-					on:click={connectChatGPT}
-				>
-					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4">
-						<circle cx="12" cy="12" r="10"/>
-						<line x1="12" y1="8" x2="12" y2="16"/>
-						<line x1="8" y1="12" x2="16" y2="12"/>
-					</svg>
-					{$i18n.t('Connect ChatGPT Account')}
-				</button>
-				{#if chatgptOAuthStatus?.connected && chatgptOAuthStatus?.expired}
-					<p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1 text-center">
-						토큰이 만료되었습니다. 다시 연결해주세요.
-					</p>
-				{/if}
-			{/if}
-		</div>
-
-		<hr class="border-gray-100 dark:border-gray-850 my-1" />
-
 		{#if ENABLE_OPENAI_API !== null && ENABLE_OLLAMA_API !== null && directConnectionsConfig !== null}
 			<div class="my-2">
 				<div class="mt-2 space-y-2 pr-1.5">
@@ -419,43 +291,64 @@
 							<div class="flex justify-between items-center">
 								<div class="font-medium">{$i18n.t('Manage OpenAI API Connections')}</div>
 
-								<Tooltip content={$i18n.t(`Add Connection`)}>
-									<button
-										class="px-1"
-										on:click={() => {
-											showAddOpenAIConnectionModal = true;
-										}}
-										type="button"
-									>
-										<Plus />
-									</button>
-								</Tooltip>
+								<div class="flex items-center gap-1">
+									<Tooltip content={$i18n.t('Login with ChatGPT')}>
+										<button
+											class="px-1"
+											on:click={() => { showAddChatGPTConnectionModal = true; }}
+											type="button"
+										>
+											<svg viewBox="0 0 41 41" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="currentColor">
+												<path d="M37.532 16.87a9.963 9.963 0 0 0-.856-8.184 10.078 10.078 0 0 0-10.855-4.835 9.964 9.964 0 0 0-7.505-3.348 10.079 10.079 0 0 0-9.612 6.977 9.967 9.967 0 0 0-6.664 4.834 10.08 10.08 0 0 0 1.24 11.817 9.965 9.965 0 0 0 .856 8.185 10.079 10.079 0 0 0 10.855 4.835 9.965 9.965 0 0 0 7.504 3.347 10.078 10.078 0 0 0 9.617-6.981 9.967 9.967 0 0 0 6.663-4.834 10.079 10.079 0 0 0-1.243-11.813zM22.498 37.886a7.474 7.474 0 0 1-4.799-1.735c.061-.033.168-.091.237-.134l7.964-4.6a1.294 1.294 0 0 0 .655-1.134V19.054l3.366 1.944a.12.12 0 0 1 .066.092v9.299a7.505 7.505 0 0 1-7.49 7.496zM6.392 31.006a7.471 7.471 0 0 1-.894-5.023c.06.036.162.099.237.141l7.964 4.6a1.297 1.297 0 0 0 1.308 0l9.724-5.614v3.888a.12.12 0 0 1-.048.103l-8.051 4.649a7.504 7.504 0 0 1-10.24-2.744zM4.297 13.62A7.469 7.469 0 0 1 8.2 10.333c0 .068-.004.19-.004.274v9.201a1.294 1.294 0 0 0 .654 1.132l9.723 5.614-3.366 1.944a.12.12 0 0 1-.114.012L7.044 23.86a7.504 7.504 0 0 1-2.747-10.24zm27.658 6.437l-9.724-5.615 3.367-1.943a.121.121 0 0 1 .114-.012l8.048 4.648a7.498 7.498 0 0 1-1.158 13.528v-9.476a1.293 1.293 0 0 0-.647-1.13zm3.35-5.043c-.059-.037-.162-.099-.236-.141l-7.965-4.6a1.298 1.298 0 0 0-1.308 0l-9.723 5.614v-3.888a.12.12 0 0 1 .048-.103l8.05-4.645a7.497 7.497 0 0 1 11.135 7.763zm-21.063 6.929l-3.367-1.944a.12.12 0 0 1-.065-.092v-9.299a7.497 7.497 0 0 1 12.293-5.756 6.94 6.94 0 0 0-.236.134l-7.965 4.6a1.294 1.294 0 0 0-.654 1.132l-.006 11.225zm1.829-3.943l4.33-2.501 4.332 2.5v4.999l-4.331 2.5-4.331-2.5V18z"/>
+											</svg>
+										</button>
+									</Tooltip>
+
+									<Tooltip content={$i18n.t('Add Connection')}>
+										<button
+											class="px-1"
+											on:click={() => { showAddOpenAIConnectionModal = true; }}
+											type="button"
+										>
+											<Plus />
+										</button>
+									</Tooltip>
+								</div>
 							</div>
 
 							<div class="flex flex-col gap-1.5 mt-1.5">
 								{#each OPENAI_API_BASE_URLS as url, idx}
-									<OpenAIConnection
-										pipeline={pipelineUrls[url] ? true : false}
-										bind:url
-										bind:key={OPENAI_API_KEYS[idx]}
-										bind:config={OPENAI_API_CONFIGS[idx]}
-										onSubmit={() => {
-											updateOpenAIHandler();
-										}}
-										onDelete={() => {
-											OPENAI_API_BASE_URLS = OPENAI_API_BASE_URLS.filter(
-												(url, urlIdx) => idx !== urlIdx
-											);
-											OPENAI_API_KEYS = OPENAI_API_KEYS.filter((key, keyIdx) => idx !== keyIdx);
+									{#if OPENAI_API_CONFIGS[idx]?.type === 'chatgpt_oauth'}
+										<ChatGPTConnection
+											{chatgptOAuthStatus}
+											onLogin={() => { showAddChatGPTConnectionModal = true; }}
+											onDisconnect={disconnectChatGPT}
+											onConfigure={() => { showAddChatGPTConnectionModal = true; }}
+										/>
+									{:else}
+										<OpenAIConnection
+											pipeline={pipelineUrls[url] ? true : false}
+											bind:url
+											bind:key={OPENAI_API_KEYS[idx]}
+											bind:config={OPENAI_API_CONFIGS[idx]}
+											onSubmit={() => {
+												updateOpenAIHandler();
+											}}
+											onDelete={() => {
+												OPENAI_API_BASE_URLS = OPENAI_API_BASE_URLS.filter(
+													(url, urlIdx) => idx !== urlIdx
+												);
+												OPENAI_API_KEYS = OPENAI_API_KEYS.filter((key, keyIdx) => idx !== keyIdx);
 
-											let newConfig = {};
-											OPENAI_API_BASE_URLS.forEach((url, newIdx) => {
-												newConfig[newIdx] = OPENAI_API_CONFIGS[newIdx < idx ? newIdx : newIdx + 1];
-											});
-											OPENAI_API_CONFIGS = newConfig;
-											updateOpenAIHandler();
-										}}
-									/>
+												let newConfig = {};
+												OPENAI_API_BASE_URLS.forEach((url, newIdx) => {
+													newConfig[newIdx] = OPENAI_API_CONFIGS[newIdx < idx ? newIdx : newIdx + 1];
+												});
+												OPENAI_API_CONFIGS = newConfig;
+												updateOpenAIHandler();
+											}}
+										/>
+									{/if}
 								{/each}
 							</div>
 						</div>

@@ -41,28 +41,15 @@ export const disconnectChatGPTOAuth = async (token: string = '') => {
 	return res.json();
 };
 
-export const getChatGPTOAuthConfig = async (token: string = '') => {
-	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/config`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			...(token && { authorization: `Bearer ${token}` })
-		}
-	});
-	if (!res.ok) throw await res.json();
-	return res.json(); // { redirect_uri }
-};
-
-export const updateChatGPTOAuthConfig = async (token: string = '', redirectUri: string) => {
-	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/config`, {
+export const handleChatGPTOAuthCallback = async (token: string = '', callbackUrl: string) => {
+	const res = await fetch(`${CHATGPT_OAUTH_BASE_URL}/handle-callback`, {
 		method: 'POST',
 		headers: {
 			Accept: 'application/json',
 			'Content-Type': 'application/json',
 			...(token && { authorization: `Bearer ${token}` })
 		},
-		body: JSON.stringify({ redirect_uri: redirectUri })
+		body: JSON.stringify({ callback_url: callbackUrl })
 	});
 	if (!res.ok) throw await res.json();
 	return res.json();

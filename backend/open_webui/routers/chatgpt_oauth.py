@@ -3,10 +3,10 @@ import base64
 import secrets
 import time
 import logging
+from urllib.parse import urlparse, parse_qs, urlencode
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -16,22 +16,18 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# OpenAI Codex OAuth 공개 Client ID — 변경 불가 (Cline, Roo Code, opencode 등 모두 동일)
 CHATGPT_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_OAUTH_AUTH_URL = "https://auth.openai.com/oauth/authorize"
 CHATGPT_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CHATGPT_OAUTH_SCOPES = "openid profile email offline_access"
 CHATGPT_OAUTH_PLACEHOLDER_KEY = "__chatgpt_oauth__"
 
-# state → {code_verifier, redirect_uri}  (in-memory, single-process)
+# OpenAI OAuth 앱에 등록된 고정 Redirect URI — 절대 변경 불가
+CHATGPT_OAUTH_REDIRECT_URI = "http://localhost:1455/auth/callback"
+
+# state → code_verifier (in-memory, single-process)
 _pending_states: dict = {}
-
-
-def _get_redirect_uri(request: Request) -> str:
-    custom = request.app.state.config.CHATGPT_OAUTH_REDIRECT_URI
-    if custom:
-        return custom
-    base = str(request.base_url).rstrip("/")
-    return f"{base}/api/v1/chatgpt-oauth/callback"
 
 
 def _make_pkce_pair() -> tuple[str, str]:
@@ -62,12 +58,12 @@ async def refresh_chatgpt_token(app) -> str:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 CHATGPT_OAUTH_TOKEN_URL,
-                json={
+                data=urlencode({
                     "client_id": CHATGPT_OAUTH_CLIENT_ID,
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,
-                },
-                headers={"Content-Type": "application/json"},
+                }),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
             ) as r:
                 if r.status != 200:
                     text = await r.text()
@@ -149,67 +145,79 @@ def _remove_openai_connection(request: Request):
 
 @router.get("/login")
 async def chatgpt_oauth_login(request: Request, user=Depends(get_admin_user)):
-    """OAuth PKCE 플로우 시작. auth_url과 사용될 redirect_uri를 반환."""
-    redirect_uri = _get_redirect_uri(request)
+    """OAuth PKCE 플로우 시작. auth_url과 고정된 redirect_uri를 반환."""
     code_verifier, code_challenge = _make_pkce_pair()
     state = secrets.token_urlsafe(32)
 
-    _pending_states[state] = {
-        "code_verifier": code_verifier,
-        "redirect_uri": redirect_uri,
-    }
+    _pending_states[state] = code_verifier
 
     params = (
         f"client_id={CHATGPT_OAUTH_CLIENT_ID}"
-        f"&redirect_uri={redirect_uri}"
+        f"&redirect_uri={CHATGPT_OAUTH_REDIRECT_URI}"
         f"&response_type=code"
         f"&scope={CHATGPT_OAUTH_SCOPES}"
         f"&state={state}"
         f"&code_challenge={code_challenge}"
         f"&code_challenge_method=S256"
+        f"&codex_cli_simplified_flow=true"
+        f"&originator=open-webui"
     )
     auth_url = f"{CHATGPT_OAUTH_AUTH_URL}?{params}"
 
-    return {"auth_url": auth_url, "redirect_uri": redirect_uri}
+    return {
+        "auth_url": auth_url,
+        "redirect_uri": CHATGPT_OAUTH_REDIRECT_URI,
+    }
 
 
-@router.get("/callback")
-async def chatgpt_oauth_callback(
+class HandleCallbackForm(BaseModel):
+    callback_url: str
+
+
+@router.post("/handle-callback")
+async def chatgpt_oauth_handle_callback(
     request: Request,
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
-    error_description: Optional[str] = None,
+    form_data: HandleCallbackForm,
+    user=Depends(get_admin_user),
 ):
-    """OpenAI 인증 후 리다이렉트 되는 콜백. 토큰을 교환하고 설정 저장."""
+    """
+    사용자가 브라우저에서 복사한 콜백 URL을 처리합니다.
+    ChatGPT 로그인 후 브라우저가 http://localhost:1455/auth/callback?code=...&state=... 으로
+    리다이렉트되면 해당 URL 전체를 붙여넣어 제출합니다.
+    """
+    try:
+        parsed = urlparse(form_data.callback_url.strip())
+        params = parse_qs(parsed.query)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid callback URL format")
+
+    error = params.get("error", [None])[0]
     if error:
-        log.error(f"ChatGPT OAuth error: {error} - {error_description}")
-        return RedirectResponse(
-            f"/admin/settings?tab=connections&chatgpt_error={error}"
-        )
+        error_desc = params.get("error_description", [""])[0]
+        raise HTTPException(status_code=400, detail=f"OAuth error: {error} - {error_desc}")
+
+    code = params.get("code", [None])[0]
+    state = params.get("state", [None])[0]
 
     if not code or not state:
-        raise HTTPException(status_code=400, detail="Missing code or state parameter")
+        raise HTTPException(status_code=400, detail="Missing code or state in callback URL")
 
-    pending = _pending_states.pop(state, None)
-    if pending is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-
-    code_verifier = pending["code_verifier"]
-    redirect_uri = pending["redirect_uri"]
+    code_verifier = _pending_states.pop(state, None)
+    if code_verifier is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state. Please start the login flow again.")
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 CHATGPT_OAUTH_TOKEN_URL,
-                json={
+                data=urlencode({
                     "client_id": CHATGPT_OAUTH_CLIENT_ID,
                     "code": code,
-                    "redirect_uri": redirect_uri,
+                    "redirect_uri": CHATGPT_OAUTH_REDIRECT_URI,
                     "grant_type": "authorization_code",
                     "code_verifier": code_verifier,
-                },
-                headers={"Content-Type": "application/json"},
+                }),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
             ) as r:
                 if r.status != 200:
                     text = await r.text()
@@ -237,8 +245,8 @@ async def chatgpt_oauth_callback(
 
     _add_openai_connection(request)
 
-    log.info("ChatGPT OAuth connected successfully")
-    return RedirectResponse("/admin/settings?tab=connections&chatgpt=connected")
+    log.info("ChatGPT OAuth connected successfully via manual callback")
+    return {"success": True}
 
 
 @router.get("/status")
@@ -268,28 +276,3 @@ async def chatgpt_oauth_disconnect(request: Request, user=Depends(get_admin_user
 
     log.info("ChatGPT OAuth disconnected")
     return {"success": True}
-
-
-class ChatGPTOAuthConfigForm(BaseModel):
-    redirect_uri: str
-
-
-@router.get("/config")
-async def get_chatgpt_oauth_config(request: Request, user=Depends(get_admin_user)):
-    """저장된 ChatGPT OAuth 설정 조회."""
-    return {
-        "redirect_uri": request.app.state.config.CHATGPT_OAUTH_REDIRECT_URI,
-    }
-
-
-@router.post("/config")
-async def update_chatgpt_oauth_config(
-    request: Request,
-    form_data: ChatGPTOAuthConfigForm,
-    user=Depends(get_admin_user),
-):
-    """ChatGPT OAuth 설정 저장 (redirect_uri 등)."""
-    request.app.state.config.CHATGPT_OAUTH_REDIRECT_URI = form_data.redirect_uri.strip()
-    return {
-        "redirect_uri": request.app.state.config.CHATGPT_OAUTH_REDIRECT_URI,
-    }

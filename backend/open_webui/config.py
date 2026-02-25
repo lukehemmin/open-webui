@@ -2716,8 +2716,3 @@ CHATGPT_OAUTH_EXPIRES_AT = PersistentConfig(
     float(os.environ.get("CHATGPT_OAUTH_EXPIRES_AT", "0")),
 )
 
-CHATGPT_OAUTH_REDIRECT_URI = PersistentConfig(
-    "CHATGPT_OAUTH_REDIRECT_URI",
-    "chatgpt_oauth.redirect_uri",
-    os.environ.get("CHATGPT_OAUTH_REDIRECT_URI", ""),
-)
